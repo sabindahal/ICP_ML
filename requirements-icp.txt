@@ -1,8 +1,9 @@
-Pillow==9.5.0
-easyocr~=1.6.2
-opencv-python~=4.5.4.60
-pytesseract~=0.3.10
-numpy~=1.22.2
-torch~=1.13.0
-torchvision~=0.14.0
+Pillow
+easyocr
+opencv-python
+pytesseract
+numpy
+torch
+torchvision
 datasets
+matplotlib
