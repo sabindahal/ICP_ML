@@ -1,5 +1,4 @@
 Pillow
-easyocr
 opencv-python
 pytesseract
 numpy
@@ -7,5 +6,3 @@ torch
 torchvision
 datasets
 matplotlib
-re
-time

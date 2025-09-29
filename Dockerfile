@@ -22,8 +22,6 @@ RUN pip install --upgrade pip && \
     pip install -r requirements-icp.txt && \
     pip install jupyter
 
-COPY sample.ipynb .
-
 # Expose Jupyter port
 EXPOSE 8888
 

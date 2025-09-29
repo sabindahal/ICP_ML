@@ -9,3 +9,5 @@ services:
     volumes:
       - ./:/workspace
     working_dir: /workspace
+    tmpfs:
+      - /tmp:size=1g,mode=1777
