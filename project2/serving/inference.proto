@@ -1,0 +1,9 @@
+syntax = "proto3";
+package inference;
+
+message PredictRequest { repeated float features = 1; }
+message PredictResponse { float y = 1; double infer_ms = 2; }
+
+service Inference {
+  rpc Predict (PredictRequest) returns (PredictResponse);
+}
