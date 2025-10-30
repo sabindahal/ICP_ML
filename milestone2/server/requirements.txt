@@ -1,0 +1,14 @@
+torch==2.9.0
+torchvision==0.24.0
+torchaudio==2.9.0
+numpy==2.3.4
+opencv-python-headless==4.10.0.84
+joblib==1.4.2
+datasets==4.3.0
+pillow==10.4.0
+matplotlib==3.10.6
+tqdm
+grpcio
+grpcio-tools
+minio
+joblib==1.4.2

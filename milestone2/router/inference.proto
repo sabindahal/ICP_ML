@@ -1,0 +1,22 @@
+syntax = "proto3";
+package inference;
+
+message FeatureVector {
+  repeated float values = 1;
+}
+
+message PredictRequest {
+  oneof input {
+    bytes image        = 1; 
+    FeatureVector features = 2; 
+  }
+}
+
+message PredictResponse {
+  float  y        = 1;
+  double infer_ms = 2; 
+}
+
+service Inference {
+  rpc Predict (PredictRequest) returns (PredictResponse);
+}
