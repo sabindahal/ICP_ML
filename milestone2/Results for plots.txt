@@ -1,0 +1,23 @@
+Training Model 1: Deskewed Red
+Epoch 1/3, Loss: 6.6902
+Epoch 2/3, Loss: 6.0630
+Epoch 3/3, Loss: 6.0081
+Model 1: Deskewed Red: Accuracy=0.20%, Latency=4.09ms, Throughput=244.59 img/s
+
+Training Model 2: Deskewed Grey
+Epoch 1/3, Loss: 6.7034
+Epoch 2/3, Loss: 6.0642
+Epoch 3/3, Loss: 6.0126
+Model 2: Deskewed Grey: Accuracy=0.60%, Latency=0.89ms, Throughput=1120.59 img/s
+
+Training Model 3: Red+Denoise
+Epoch 1/3, Loss: 6.6807
+Epoch 2/3, Loss: 6.0588
+Epoch 3/3, Loss: 6.0087
+Model 3: Red+Denoise: Accuracy=0.60%, Latency=1.52ms, Throughput=659.14 img/s
+
+Training Model 4: PreDenoise Red
+Epoch 1/3, Loss: 6.6997
+Epoch 2/3, Loss: 6.0664
+Epoch 3/3, Loss: 6.0104
+Model 4: PreDenoise Red: Accuracy=0.20%, Latency=1.14ms, Throughput=876.18 img/s
