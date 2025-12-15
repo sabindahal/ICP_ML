@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: router
+  labels:
+    app: router
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: router
+  template:
+    metadata:
+      labels:
+        app: router
+    spec:
+      containers:
+        - name: router
+          image: ocr-router:demo
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: ROUTER_HTTP_PORT
+              value: "8080"
+            - name: MODEL_GRPC_PORT
+              value: "50051"
+            - name: MODEL1_DNS
+              value: "model1-headless.default.svc.cluster.local"
+            - name: MODEL2_DNS
+              value: "model2-headless.default.svc.cluster.local"
+            - name: ENDPOINT_RECHECK_SEC
+              value: "2.0"
+          ports:
+            - containerPort: 8080
+              name: http
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"

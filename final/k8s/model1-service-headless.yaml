@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: model1-headless
+  labels:
+    app: model1
+spec:
+  clusterIP: None
+  selector:
+    app: model1
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: 50051

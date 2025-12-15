@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: model2
+  labels:
+    app: model2
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: model2
+  template:
+    metadata:
+      labels:
+        app: model2
+    spec:
+      containers:
+        - name: model2
+          image: ocr-model2:demo
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: MODEL_NAME
+              value: "model2"
+            - name: DEMO_TEXT
+              value: "演示输出：你好，世界"
+            - name: GRPC_PORT
+              value: "50051"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          ports:
+            - containerPort: 50051
+              name: grpc
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "1000m"
+              memory: "256Mi"

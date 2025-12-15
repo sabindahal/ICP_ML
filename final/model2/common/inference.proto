@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package inference;
+
+service Inference {
+  rpc Predict (PredictRequest) returns (PredictResponse);
+}
+
+message PredictRequest {
+  bytes image = 1;
+  string filename = 2;
+}
+
+message PredictResponse {
+  string text = 1;          // prediction text (demo)
+  string model = 2;         // model name (model1/model2)
+  double infer_ms = 3;      // model-side inference time (ms)
+  string pod_name = 4;      // Kubernetes pod name
+  string pod_ip = 5;        // Pod IP as seen by the pod (best-effort)
+  int64  started_at_unix = 6; // process start time for the pod (seconds since epoch)
+}
