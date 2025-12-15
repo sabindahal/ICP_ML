@@ -6,6 +6,7 @@ import pytesseract
 import re
 import time
 import easyocr
+import pandas as pd
 
 # Assertions
 def accuracyChecker(words, testData):
@@ -37,7 +38,7 @@ def accuracyChecker(words, testData):
     return accuracy / 5
 
 # Preprocessing
-def preprocessing(img):
+def preprocessingTesseract(img):
     testingImageArray = np.array(img)
     edgeDetectionArray = cv2.cvtColor(testingImageArray, cv2.COLOR_RGB2GRAY)
 
@@ -102,6 +103,20 @@ def preprocessing(img):
             redshiftImg[m][n][2] = 0
     return redshiftImg
 
+def preprocessingEasyOCR(img):
+    testingImageArray = np.array(img)
+
+    # greyscale it
+    grey = cv2.cvtColor(testingImageArray, cv2.COLOR_RGB2GRAY)
+
+    # gaussian blur
+    grey = cv2.GaussianBlur(grey, (5, 5), 0)
+
+    # binary it
+    thresh = cv2.adaptiveThreshold(grey, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 10)
+
+    return thresh
+
 # Tesseract Model
 def chooseTesseract(img, testingData):
     start = time.time()
@@ -128,23 +143,29 @@ def chooseTesseract(img, testingData):
     return accuracy, latency
 
 # EasyOCR model
-def chooseEasyOCR(img, testingData):
-    reader = easyocr.Reader(['ch_sim'])
+def chooseEasyOCR(img, testingData, reader):
     start = time.time()
     results = reader.readtext(img)
     stop = time.time()
     latency = stop - start
 
-    # snag the words
-    wordsRaw = []
-    for res in results:
-        wordsRaw.append(res[1])
+    # snag words
+    testing = []
+    for m in range(len(results)):
+        if results[m][2] > .25:
+            testing.append(results[m][1])
+
+    # check accuracy
+    accuracy = accuracyChecker(testing, testingData)
+
+    return accuracy, latency
+
+
+def chooseTesseractPerformance(img):
+    wordsRaw = pytesseract.image_to_string(img, lang='chi_sim')
 
     # clean and tokenize the data from OCR
-    words = []
-    for w in wordsRaw:
-        w_clean = w.replace(" ", "")
-        words.append(w_clean)
+    words = wordsRaw.replace(" ", "").splitlines()
 
     pattern = r'\d+|[\u4e00-\u9fff]+|[A-Za-z]+|\s|[^\w\s]'
     tokens = []
@@ -158,47 +179,88 @@ def chooseEasyOCR(img, testingData):
             wordsData.append(tokens[i][j])
 
     # run the accuracy checker on the final data
-    accuracy = accuracyChecker(wordsData, testingData)
-    return accuracy, latency
+    return wordsData
+
+# EasyOCR model
+def chooseEasyOCRPerformance(img, reader):
+
+    results = reader.readtext(img)
+
+    # snag words
+    testing = []
+    for m in range(len(results)):
+        if results[m][2] > .25:
+            testing.append(results[m][1])
+
+    return testing
 
 # This is what actually chooses which model to use, choice = 0 for tesseract, choice = 1 for easyOCR
 # The img input needs to be a pillow img I believe, and the ground truth for comparison has to be from
 # the lansinuote ID card set, as the processing for the ground truth is based on the structure of that dataset
 # to avoid all issues, use img = ds['train'][imgNum]['image'] and testingData = ds['train'][imgNum]['ocr'],
 # imgNum here is just whichever image of the 20000 you would like to select.
-def chooseModel(choice, img, testingData):
-    processedImg = preprocessing(img)
-    if choice == 0:
-        accuracy, latency = chooseTesseract(processedImg, testingData)
-        return accuracy, latency
-    elif choice == 1:
-        accuracy, latency = chooseEasyOCR(processedImg, testingData)
-        return accuracy, latency
+def chooseModel(choice, img, testingData, performance):
+    if performance == 0:
+        if choice == 0:
+            processedImg = preprocessingTesseract(img)
+            accuracy, latency = chooseTesseract(processedImg, testingData)
+            return accuracy, latency
+        elif choice == 1:
+            processedImg = preprocessingEasyOCR(img)
+            accuracy, latency = chooseEasyOCR(processedImg, testingData, reader)
+            return accuracy, latency
+        else:
+            return "invalid choice"
+    elif performance == 1:
+        if choice == 0:
+            processedImg = preprocessingTesseract(img)
+            words = chooseTesseractPerformance(processedImg)
+            return words
+        elif choice == 1:
+            processedImg = preprocessingEasyOCR(img)
+            words = chooseEasyOCRPerformance(processedImg, reader)
+            return words
+        else:
+            return "invalid choice"
     else:
-        return "invalid choice"
+        return "invalid perfomance choice"
 
 # This is just an example run to show how the functions work. You can simply run the above
 # function with an input of a choice, image, and the ground truth for accuracy comparison
 ds = load_dataset("lansinuote/ocr_id_card")
-accuracyTesseract = []
-latencyTesseract = []
-accuracyEasyOCR = []
-latencyEasyOCR = []
-numImages = len(ds['train'])
-numImages = 10
-for imgNum in range(numImages):
-    currImg = ds['train'][imgNum]['image']
-    testingData = ds['train'][imgNum]['ocr']
-    if imgNum % 2 == 0:
-        accuracy, latency = chooseModel(imgNum % 2, currImg, testingData)
+results = []
+total = 0
+reader = easyocr.Reader(['ch_sim'])
+numImages = [1,2,5,10,100]
+
+for j in numImages:
+    accuracyTesseract = []
+    latencyTesseract = []
+    accuracyEasyOCR = []
+    latencyEasyOCR = []
+    for imgNum in range(j):
+        currImg = ds['train'][imgNum + total]['image']
+        testingData = ds['train'][imgNum + total]['ocr']
+
+        accuracy, latency = chooseModel(0, currImg, testingData, 0)
         accuracyTesseract.append(accuracy)
         latencyTesseract.append(latency)
-    elif imgNum % 2 == 1:
-        accuracy, latency = chooseModel(imgNum % 2, currImg, testingData)
+
+        accuracy, latency = chooseModel(1, currImg, testingData, 0)
         accuracyEasyOCR.append(accuracy)
         latencyEasyOCR.append(latency)
 
-print("Accuracy for tesseract: ", np.mean(accuracyTesseract))
-print("Latency for tesseract: ", np.mean(latencyTesseract))
-print("Accuracy for EasyOCR: ", np.mean(accuracyEasyOCR))
-print("Latency for EasyOCR: ", np.mean(latencyEasyOCR))
+    total += j
+
+    resultsDict = {
+        "Num Images": j,
+        "Tesseract Accuracy": np.mean(accuracyTesseract),
+        "Tesseract Latency (s)": np.mean(latencyTesseract),
+        "EasyOCR Accuracy": np.mean(accuracyEasyOCR),
+        "EasyOCR Latency (s)": np.mean(latencyEasyOCR),
+    }
+    results.append(resultsDict)
+
+df = pd.DataFrame(results)
+print(df.to_string(index=False))
+
