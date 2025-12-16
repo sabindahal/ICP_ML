@@ -119,10 +119,7 @@ def preprocessingEasyOCR(img):
 
 # Tesseract Model
 def chooseTesseract(img, testingData):
-    start = time.time()
     wordsRaw = pytesseract.image_to_string(img, lang='chi_sim')
-    stop = time.time()
-    latency = stop - start
 
     # clean and tokenize the data from OCR
     words = wordsRaw.replace(" ","").splitlines()
@@ -140,14 +137,11 @@ def chooseTesseract(img, testingData):
 
     # run the accuracy checker on the final data
     accuracy = accuracyChecker(wordsData, testingData)
-    return accuracy, latency
+    return accuracy
 
 # EasyOCR model
 def chooseEasyOCR(img, testingData, reader):
-    start = time.time()
     results = reader.readtext(img)
-    stop = time.time()
-    latency = stop - start
 
     # snag words
     testing = []
@@ -158,7 +152,7 @@ def chooseEasyOCR(img, testingData, reader):
     # check accuracy
     accuracy = accuracyChecker(testing, testingData)
 
-    return accuracy, latency
+    return accuracy
 
 
 def chooseTesseractPerformance(img):
@@ -202,12 +196,18 @@ def chooseEasyOCRPerformance(img, reader):
 def chooseModel(choice, img, testingData, performance):
     if performance == 0:
         if choice == 0:
+            start = time.time()
             processedImg = preprocessingTesseract(img)
-            accuracy, latency = chooseTesseract(processedImg, testingData)
+            accuracy = chooseTesseract(processedImg, testingData)
+            stop = time.time()
+            latency = stop - start
             return accuracy, latency
         elif choice == 1:
+            start = time.time()
             processedImg = preprocessingEasyOCR(img)
-            accuracy, latency = chooseEasyOCR(processedImg, testingData, reader)
+            accuracy = chooseEasyOCR(processedImg, testingData, reader)
+            stop = time.time()
+            latency = stop - start
             return accuracy, latency
         else:
             return "invalid choice"
