@@ -7,6 +7,7 @@ COPY requirements.txt /app/requirements.txt
 # Install system dependencies needed by OpenCV and Tesseract
 RUN apt-get update && apt-get install -y \
     tesseract-ocr \
+    tesseract-ocr-chi-sim \
     libsm6 \
     libxrender1 \
     libxext6 \
