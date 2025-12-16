@@ -2,8 +2,8 @@ import os, time
 from concurrent.futures import ThreadPoolExecutor
 
 import grpc
-from final.common import inference_pb2 as pb
-from final.common import inference_pb2_grpc as pbg
+import inference_pb2 as pb
+import inference_pb2_grpc as pbg
 
 import numpy as np
 import cv2

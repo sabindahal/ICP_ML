@@ -9,7 +9,12 @@ RUN apt-get update && apt-get install -y \
     libxrender1 \
     libxext6 \
     fonts-noto-cjk \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/
+
+RUN pip install --no-cache-dir \
+    torch==2.2.2+cpu \
+    torchvision==0.17.2+cpu \
+    -f https://download.pytorch.org/whl/torch_stable.html
 
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
