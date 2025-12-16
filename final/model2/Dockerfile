@@ -12,9 +12,9 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/
 
 RUN pip install --no-cache-dir \
-    torch==2.2.2+cpu \
-    torchvision==0.17.2+cpu \
-    -f https://download.pytorch.org/whl/torch_stable.html
+    --index-url https://download.pytorch.org/whl/cpu \
+    torch==2.2.2 \
+    torchvision==0.17.2
 
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
