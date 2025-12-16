@@ -90,7 +90,7 @@ POD_NAME = os.getenv("POD_NAME", "unknown-pod")
 POD_IP = os.getenv("POD_IP", "unknown-ip")
 STARTED_AT = int(os.getenv("STARTED_AT_UNIX", str(int(time.time()))))
 
-PORT = int(os.getenv("GRPC_PORT", "50052"))
+PORT = int(os.getenv("GRPC_PORT", "50051"))
 
 class Svc(pbg.InferenceServicer):
     def Predict(self, request, context):
@@ -118,7 +118,7 @@ class Svc(pbg.InferenceServicer):
 def serve():
     server = grpc.server(ThreadPoolExecutor(max_workers=16))
     pbg.add_InferenceServicer_to_server(Svc(), server)
-    server.add_insecure_port(f"127.0.0.1:{PORT}")
+    server.add_insecure_port(f"[::]:{PORT}")
     print(f"[{MODEL_NAME}] gRPC ready on :{PORT} pod={POD_NAME} ip={POD_IP} started_at={STARTED_AT}")
     server.start()
     server.wait_for_termination()
