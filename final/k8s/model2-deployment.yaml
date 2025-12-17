@@ -38,8 +38,8 @@ spec:
               name: grpc
           resources:
             requests:
-              cpu: "100m"
-              memory: "128Mi"
+              cpu: "2"
+              memory: "2Gi"
             limits:
-              cpu: "1000m"
-              memory: "256Mi"
+              cpu: "4"
+              memory: "4Gi"

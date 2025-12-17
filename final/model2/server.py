@@ -1,66 +1,75 @@
-import os, time
+import os
+import time
+import io
 from concurrent.futures import ThreadPoolExecutor
 
 import grpc
-import inference_pb2 as pb
-import inference_pb2_grpc as pbg
-
 import numpy as np
 import cv2
 import easyocr
 from PIL import Image
-import io
 
-def preprocessingEasyOCR(img):
-    img = Image.open(io.BytesIO(img)).convert("RGB")
-    testingImageArray = np.array(img, dtype=np.uint8)
+import inference_pb2 as pb
+import inference_pb2_grpc as pbg
 
-    # greyscale it
-    grey = cv2.cvtColor(testingImageArray, cv2.COLOR_RGB2GRAY)
 
-    # gaussian blur
-    grey = cv2.GaussianBlur(grey, (5, 5), 0)
+# =========================
+# EasyOCR setup (load from local filesystem)
+# =========================
+MODEL_DIR = os.getenv("EASYOCR_MODULE_PATH", "/models/easyocr")
+# Create the reader once at startup (Chinese simplified)
+reader = easyocr.Reader(
+    ["ch_sim"],
+    gpu=False,
+    model_storage_directory=MODEL_DIR,
+)
 
-    # binary it
-    thresh = cv2.adaptiveThreshold(grey, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 10)
-
-    return thresh
-
-# EasyOCR model
-def chooseEasyOCRPerformance(img, reader):
-
-    results = reader.readtext(img)
-
-    # snag words
-    testing = []
-    for m in range(len(results)):
-        if results[m][2] > .25:
-            testing.append(results[m][1])
-
-    return testing
-
-# create reader for easyOCR
-reader = easyocr.Reader(['ch_sim'])
-
-DEMO_TEXT = os.getenv("DEMO_TEXT", "演示输出：你好，世界")  # Chinese demo text
+# =========================
+# Metadata / config
+# =========================
+DEMO_TEXT = os.getenv("DEMO_TEXT", "演示输出：你好，世界")
 MODEL_NAME = os.getenv("MODEL_NAME", "EasyOCR")
 POD_NAME = os.getenv("POD_NAME", "unknown-pod")
 POD_IP = os.getenv("POD_IP", "unknown-ip")
 STARTED_AT = int(os.getenv("STARTED_AT_UNIX", str(int(time.time()))))
-
 PORT = int(os.getenv("GRPC_PORT", "50051"))
 
+
+# =========================
+# Preprocessing + OCR
+# =========================
+def preprocessing_easyocr(img_bytes: bytes) -> np.ndarray:
+    img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+    arr = np.array(img, dtype=np.uint8)
+
+    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+    gray = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    thresh = cv2.adaptiveThreshold(
+        gray, 255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        31, 10
+    )
+    return thresh
+
+
+def run_easyocr(preprocessed_img: np.ndarray) -> str:
+    results = reader.readtext(preprocessed_img)
+    words = [txt for (_bbox, txt, conf) in results if conf is not None and conf > 0.25]
+    return " ".join(words)
+
+
+# =========================
+# gRPC service
+# =========================
 class Svc(pbg.InferenceServicer):
     def Predict(self, request, context):
-        # Simulate variable work (replace with real OCR later)
         t0 = time.perf_counter()
         try:
-            img_bytes = request.image
-            preprocessed_img = preprocessingEasyOCR(img_bytes)
-            wordsData = chooseEasyOCRPerformance(preprocessed_img, reader)
-            text_output = ' '.join(wordsData)
+            text_output = run_easyocr(preprocessing_easyocr(request.image))
         except Exception as e:
-            text_output = f"OCR failed: {str(e)}"
+            text_output = f"OCR failed: {e}"
 
         infer_ms = (time.perf_counter() - t0) * 1000.0
 
@@ -73,13 +82,22 @@ class Svc(pbg.InferenceServicer):
             started_at_unix=STARTED_AT,
         )
 
+
 def serve():
     server = grpc.server(ThreadPoolExecutor(max_workers=16))
     pbg.add_InferenceServicer_to_server(Svc(), server)
     server.add_insecure_port(f"[::]:{PORT}")
-    print(f"[{MODEL_NAME}] gRPC ready on :{PORT} pod={POD_NAME} ip={POD_IP} started_at={STARTED_AT}")
+
+    print(
+        f"[{MODEL_NAME}] gRPC ready on :{PORT} "
+        f"pod={POD_NAME} ip={POD_IP} started_at={STARTED_AT} "
+        f"easyocr_models={MODEL_DIR}",
+        flush=True,
+    )
+
     server.start()
     server.wait_for_termination()
+
 
 if __name__ == "__main__":
     serve()
