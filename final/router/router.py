@@ -31,7 +31,6 @@ LAT_PCTL = float(os.getenv("LAT_PCTL", "95"))
 ACCURATE_MODEL = os.getenv("ACCURATE_MODEL", "model1")
 FAST_MODEL = os.getenv("FAST_MODEL", "model2")
 
-
 app = FastAPI(title="OCR Monitoring Router")
 
 

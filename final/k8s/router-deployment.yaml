@@ -34,7 +34,7 @@ spec:
             - name: ACCURATE_MODEL
               value: "model1"
             - name: FAST_MODEL
-              value: "model1"
+              value: "model2"
           ports:
             - containerPort: 8080
               name: http
