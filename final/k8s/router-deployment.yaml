@@ -29,6 +29,12 @@ spec:
               value: "model2-headless.default.svc.cluster.local"
             - name: ENDPOINT_RECHECK_SEC
               value: "2.0"
+            - name: DEADLINE_MS
+              value: "3000"
+            - name: ACCURATE_MODEL
+              value: "model1"
+            - name: FAST_MODEL
+              value: "model1"
           ports:
             - containerPort: 8080
               name: http

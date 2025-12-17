@@ -22,7 +22,7 @@ MODEL_GRPC_PORT = int(os.getenv("MODEL_GRPC_PORT", "50051"))
 ENDPOINT_RECHECK_SEC = float(os.getenv("ENDPOINT_RECHECK_SEC", "2.0"))
 
 # Policy knobs
-DEADLINE_MS = float(os.getenv("DEADLINE_MS", "300"))
+DEADLINE_MS = float(os.getenv("DEADLINE_MS", "3000"))
 WINDOW_SEC = float(os.getenv("WINDOW_SEC", "30"))
 MIN_SAMPLES = int(os.getenv("MIN_SAMPLES", "10"))
 SWITCH_COOLDOWN_SEC = float(os.getenv("SWITCH_COOLDOWN_SEC", "10"))
@@ -30,6 +30,7 @@ LAT_PCTL = float(os.getenv("LAT_PCTL", "95"))
 
 ACCURATE_MODEL = os.getenv("ACCURATE_MODEL", "model1")
 FAST_MODEL = os.getenv("FAST_MODEL", "model2")
+
 
 app = FastAPI(title="OCR Monitoring Router")
 
