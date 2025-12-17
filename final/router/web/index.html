@@ -7,41 +7,146 @@
       body { font-family: Arial, sans-serif; margin: 24px; }
       .box { border: 1px solid #ddd; border-radius: 10px; padding: 16px; max-width: 760px; }
       .row { margin: 12px 0; }
-      pre { background: #111; color: #eee; padding: 12px; border-radius: 10px; overflow: auto; }
-      button { padding: 10px 14px; border-radius: 10px; border: 1px solid #ccc; cursor: pointer; }
+      pre { background: #111; color: #eee; padding: 12px; border-radius: 10px; overflow: auto; white-space: pre-wrap; }
+
+      
+      button {
+        padding: 10px 14px;
+        border-radius: 10px;
+        border: 1px solid #ccc;
+        cursor: pointer;
+        min-width: 160px;
+      }
+
       small { color: #555; }
     </style>
   </head>
+
   <body>
     <div class="box">
       <h2>OCR Monitoring Router</h2>
-      <!-- <small>
-        Policy: prefer accurate model if p95 latency <= deadline. Deadline(ms) comes from DEADLINE_MS env.
-      </small> -->
+
       <div class="row">
         <form id="f">
           <input type="file" id="files" name="files" multiple />
           <button type="submit">Upload & Predict</button>
         </form>
       </div>
+
       <div class="row">
         <b>Result</b>
-        <pre id="out">{}</pre>
+        <!-- IMPORTANT: type="button" so it never interferes with form submit -->
+        <button id="toggleRaw" type="button" style="margin-left:10px;">Show Raw JSON</button>
+
+        <pre id="pretty"></pre>
+        <pre id="raw" style="display:none;"></pre>
       </div>
     </div>
 
     <script>
       const form = document.getElementById("f");
+      const pretty = document.getElementById("pretty");
+      const raw = document.getElementById("raw");
+      const toggleBtn = document.getElementById("toggleRaw");
+
+      let rawVisible = false;
+
+      function showSummary() {
+        rawVisible = false;
+        pretty.style.display = "block";
+        raw.style.display = "none";
+        toggleBtn.textContent = "Show Raw JSON";
+      }
+
+      function showRaw() {
+        rawVisible = true;
+        pretty.style.display = "none";
+        raw.style.display = "block";
+        toggleBtn.textContent = "Show Summary";
+      }
+
+      toggleBtn.addEventListener("click", () => {
+        if (rawVisible) showSummary();
+        else showRaw();
+      });
+
       form.addEventListener("submit", async (e) => {
         e.preventDefault();
+
+        // Clear old output immediately so user sees action
+        pretty.textContent = "Running OCR...\n";
+        raw.textContent = "";
+
         const input = document.getElementById("files");
+        if (!input.files || input.files.length === 0) {
+          pretty.textContent = "Please choose one or more files first.\n";
+          showSummary();
+          return;
+        }
+
         const fd = new FormData();
         for (const f of input.files) fd.append("files", f, f.name);
 
-        const r = await fetch("/predict", { method: "POST", body: fd });
-        const j = await r.json();
-        document.getElementById("out").textContent = JSON.stringify(j, null, 2);
+        let j;
+        try {
+          const r = await fetch("/predict", { method: "POST", body: fd });
+
+          // If server returned an error, show it
+          if (!r.ok) {
+            const txt = await r.text();
+            pretty.textContent = `Request failed (HTTP ${r.status}).\n\n${txt}\n`;
+            showSummary();
+            return;
+          }
+
+          j = await r.json();
+        } catch (err) {
+          pretty.textContent = `Network / fetch error:\n${String(err)}\n`;
+          showSummary();
+          return;
+        }
+
+        // Always show raw JSON (for the toggle)
+        raw.textContent = JSON.stringify(j, null, 2);
+
+        // Accept either backend shape:
+        //  - new: {count, images: [...]}
+        //  - old: {count, results: [...]}
+        const items = Array.isArray(j.images) ? j.images
+                    : Array.isArray(j.results) ? j.results
+                    : [];
+
+        const total = Number(j.count) || items.length || input.files.length;
+
+        // Build summary output from either structure
+        let out = "";
+        items.forEach((item, idx) => {
+          const filename = item.filename ?? "";
+          const selectedModel = item.selected_model ?? item.selectedModel ?? "";
+          const predictedText = item.predicted_text ?? item.prediction_text ?? "";
+          const inferMs = item.model_infer_ms ?? item.infer_ms ?? item.modelInferMs;
+
+          out += `# Image ${idx + 1}/${total}\n`;
+          out += `    • Filename: ${filename}\n`;
+          out += `    • Model selected: ${selectedModel}\n`;
+          out += `    • Text predicted: ${predictedText}\n`;
+          out += `    • Inference time (ms): ${inferMs !== undefined ? Number(inferMs).toFixed(2) : ""}\n\n`;
+          out += `----------------------------------------\n\n`;
+        });
+
+        // If items empty, show something helpful
+        if (!out) {
+          out = "No results found in response.\n\nTry checking Raw JSON.\n";
+        }
+
+        pretty.textContent = out;
+
+        // Default view after each run: Summary
+        showSummary();
       });
+
+      // Initial default view
+      showSummary();
     </script>
   </body>
 </html>
