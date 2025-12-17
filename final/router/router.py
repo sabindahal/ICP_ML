@@ -25,7 +25,7 @@ ENDPOINT_RECHECK_SEC = float(os.getenv("ENDPOINT_RECHECK_SEC", "2.0"))
 # Policy knobs
 DEADLINE_MS = float(os.getenv("DEADLINE_MS", "3000"))
 WINDOW_SEC = float(os.getenv("WINDOW_SEC", "20"))
-MIN_SAMPLES = int(os.getenv("MIN_SAMPLES", "5"))
+MIN_SAMPLES = int(os.getenv("MIN_SAMPLES", "5"))  # warmup REQUESTS per model
 SWITCH_COOLDOWN_SEC = float(os.getenv("SWITCH_COOLDOWN_SEC", "3"))
 LAT_PCTL = float(os.getenv("LAT_PCTL", "95"))
 
@@ -68,13 +68,14 @@ class Worker:
 
 
 class RollingStats:
+    """
+    Stores PER-IMAGE latency samples (ms) per model in a rolling time window.
+    We then use pctl_ms_per_img * num_images to predict request tail latency.
+    """
 
-    def __init__(self, window_sec: float):
+    def __init__(self, window_sec: float, models: List[str]):
         self.window_sec = window_sec
-        self.data: Dict[str, Deque[Tuple[float, float, bool]]] = {
-            "model1": deque(),
-            "model2": deque(),
-        }
+        self.data: Dict[str, Deque[Tuple[float, float, bool]]] = {m: deque() for m in models}
 
     def _prune(self, model: str, now: float):
         dq = self.data.get(model)
@@ -84,11 +85,11 @@ class RollingStats:
         while dq and dq[0][0] < cutoff:
             dq.popleft()
 
-    def add(self, model: str, router_ms: float, ok: bool):
+    def add(self, model: str, per_img_ms: float, ok: bool):
         now = time.time()
         if model not in self.data:
             self.data[model] = deque()
-        self.data[model].append((now, float(router_ms), bool(ok)))
+        self.data[model].append((now, float(per_img_ms), bool(ok)))
         self._prune(model, now)
 
     def summary(self, model: str) -> Dict[str, Optional[float]]:
@@ -110,7 +111,7 @@ class RollingStats:
 
         return {
             "n": float(n),
-            "pctl_ms": json_safe_float(pctl_ms),
+            "pctl_ms": json_safe_float(pctl_ms),      # NOTE: per-image pctl
             "err_rate": json_safe_float(err_rate),
         }
 
@@ -121,11 +122,15 @@ class PoolManager:
         self.pools: Dict[str, Dict[str, Worker]] = {"model1": {}, "model2": {}}
         self.last_refresh = 0.0
 
-        self.stats = RollingStats(window_sec=WINDOW_SEC)
+        self.models = sorted({ACCURATE_MODEL, FAST_MODEL})
+        self.stats = RollingStats(window_sec=WINDOW_SEC, models=self.models)
 
         # hysteresis
         self.last_choice = ACCURATE_MODEL
         self.last_switch_at = 0.0
+
+        # warmup (by REQUEST count)
+        self.warmup_counts: Dict[str, int] = {ACCURATE_MODEL: 0, FAST_MODEL: 0}
 
     def refresh(self):
         now = time.time()
@@ -167,49 +172,62 @@ class PoolManager:
         with self.lock:
             w.inflight = max(0, w.inflight - 1)
 
-    def choose_model(self) -> Tuple[str, Dict[str, Dict[str, Optional[float]]]]:
-        a = ACCURATE_MODEL  
-        f = FAST_MODEL     
+    def choose_model(self, num_images: int) -> Tuple[str, Dict[str, Dict[str, Optional[float]]]]:
 
-        sa = self.stats.summary(a)
+        a = ACCURATE_MODEL
+        f = FAST_MODEL
+        k = max(1, int(num_images))
+
+        sa = self.stats.summary(a)  # per-image windowed stats
         sf = self.stats.summary(f)
 
         now = time.time()
         can_switch = (now - self.last_switch_at) >= SWITCH_COOLDOWN_SEC
 
-        enough_a = (sa.get("n") or 0.0) >= MIN_SAMPLES
-        enough_f = (sf.get("n") or 0.0) >= MIN_SAMPLES
-
+        # Health (windowed)
         a_err = sa["err_rate"] if sa.get("err_rate") is not None else 1.0
         f_err = sf["err_rate"] if sf.get("err_rate") is not None else 1.0
-
-        a_p = sa.get("pctl_ms")
-        f_p = sf.get("pctl_ms")
-
         a_healthy = a_err <= 0.10
         f_healthy = f_err <= 0.10
 
+        # Tail per-image latency
+        a_p_img = sa.get("pctl_ms")
+        f_p_img = sf.get("pctl_ms")
+
+        # Predict tail total latency for this request size
+        a_pred = (a_p_img * k) if (a_p_img is not None) else None
+        f_pred = (f_p_img * k) if (f_p_img is not None) else None
+
         accurate_meets_deadline = bool(
-            enough_a and a_healthy and (a_p is not None) and (a_p <= DEADLINE_MS)
+            a_healthy and (a_pred is not None) and (a_pred <= DEADLINE_MS)
         )
 
-        # Bootstrap: make sure BOTH models get MIN_SAMPLES so switching becomes possible.
-        # This avoids the deadlock where fast never gets any samples.
-        if not enough_a:
+        warm_a = int(self.warmup_counts.get(a, 0))
+        warm_f = int(self.warmup_counts.get(f, 0))
+
+        # Warmup phases (by request count)
+        if warm_a < MIN_SAMPLES:
             desired = a
-        elif not enough_f:
+        elif warm_f < MIN_SAMPLES:
             desired = f
         else:
-            # Normal operation: prefer accurate if it can meet deadline, else fast
-            desired = a if accurate_meets_deadline else f
+            na = int(sa.get("n") or 0)
+            nf = int(sf.get("n") or 0)
 
-            # Optional: if the chosen model is unhealthy, fall back to the other if healthy
-            if desired == a and (not a_healthy) and f_healthy:
-                desired = f
-            elif desired == f and (not f_healthy) and a_healthy:
+            if na == 0 and nf == 0:
                 desired = a
+            elif k > 6:
+                desired = f
+            else:
+                desired = a if accurate_meets_deadline else f
 
-        # Cooldown hysteresis (prevents flapping)
+                if desired == a and (not a_healthy) and f_healthy:
+                    desired = f
+                elif desired == f and (not f_healthy) and a_healthy:
+                    desired = a
+
+
+        # Cooldown hysteresis
         if (not can_switch) and desired != self.last_choice:
             desired = self.last_choice
 
@@ -217,13 +235,23 @@ class PoolManager:
             self.last_choice = desired
             self.last_switch_at = now
 
-        return desired, {"accurate": sa, "fast": sf}
+        # Add useful debug fields for UI
+        sa2 = dict(sa)
+        sf2 = dict(sf)
+        sa2["pred_ms_for_req"] = json_safe_float(a_pred)
+        sf2["pred_ms_for_req"] = json_safe_float(f_pred)
+        sa2["warmup_req_n"] = float(warm_a)
+        sf2["warmup_req_n"] = float(warm_f)
+        sa2["req_images"] = float(k)
+        sf2["req_images"] = float(k)
+
+        return desired, {"accurate": sa2, "fast": sf2}
+
 
 pm = PoolManager()
 
 
 def append_monitor_row(row: Dict[str, object]) -> None:
-
     fieldnames = ["ts", "num_images", "selected_model", "router_total_ms"]
 
     with MONITOR_LOCK:
@@ -279,12 +307,7 @@ def monitor_ui():
 
 @app.get("/monitor")
 def monitor(limit: int = 300, sort_by: str = ""):
-    """
-    Returns rows from the monitoring CSV in descending order.
-    Default sort: router_total_ms descending.
-    """
     rows = read_monitor_rows()
-
     if not rows:
         return {"count": 0, "rows": [], "csv_path": MONITOR_CSV_PATH}
 
@@ -311,42 +334,42 @@ async def predict(files: List[UploadFile] = File(...)):
     req_t0 = time.perf_counter()
     num_images = len(files)
 
-    # We log ONE row per request (batch upload). Use the first image's chosen model as the request's model.
-    chosen_model_for_request = None
+    # Choose ONCE per request (batch-aware)
+    chosen_model, policy_stats = pm.choose_model(num_images=num_images)
+
+    # Pick backend once per request as well (keeps all images consistent)
+    pm.refresh()
+    worker = pm.pick_worker(chosen_model)
+    if worker is None:
+        return JSONResponse(
+            status_code=503,
+            content={"error": f"No backends available for {chosen_model}. Check services/endpoints."},
+        )
 
     results = []
+    ok_req = True
+
+    # Run each image, collect per-image stats
     for f in files:
         img = await f.read()
 
-        chosen_model, policy_stats = pm.choose_model()
-        if chosen_model_for_request is None:
-            chosen_model_for_request = chosen_model
-
-        pm.refresh()
-        worker = pm.pick_worker(chosen_model)
-        if worker is None:
-            return JSONResponse(
-                status_code=503,
-                content={"error": f"No backends available for {chosen_model}. Check services/endpoints."},
-            )
-
         pm.incr(worker)
-
         t0 = time.perf_counter()
-        ok = True
+        ok_img = True
         try:
             resp = worker.stub.Predict(pb.PredictRequest(image=img, filename=f.filename))
         except grpc.RpcError as e:
-            ok = False
-            router_ms = (time.perf_counter() - t0) * 1000.0
-            pm.stats.add(chosen_model, router_ms=router_ms, ok=False)
+            ok_img = False
+            ok_req = False
+            per_img_ms = (time.perf_counter() - t0) * 1000.0
+            pm.stats.add(chosen_model, per_img_ms=per_img_ms, ok=False)
             pm.decr(worker)
             return JSONResponse(status_code=503, content={"error": f"Backend error: {e}"})
         finally:
             pm.decr(worker)
 
-        router_ms = (time.perf_counter() - t0) * 1000.0
-        pm.stats.add(chosen_model, router_ms=router_ms, ok=ok)
+        per_img_ms = (time.perf_counter() - t0) * 1000.0
+        pm.stats.add(chosen_model, per_img_ms=per_img_ms, ok=ok_img)
 
         pool_sz = pm.pool_size(chosen_model)
         scaled_up = pool_sz > 1
@@ -375,8 +398,11 @@ async def predict(files: List[UploadFile] = File(...)):
             "likely_new_pod_used": likely_new_pod,
             "prediction_text": resp.text,
             "model_infer_ms": float(resp.infer_ms),
-            "router_total_ms": float(router_ms),
+            "router_total_ms": float(per_img_ms),  # per-image router time
         })
+
+    # Count warmup by REQUESTS (one increment per /predict call)
+    pm.warmup_counts[chosen_model] = int(pm.warmup_counts.get(chosen_model, 0)) + 1
 
     req_ms = (time.perf_counter() - req_t0) * 1000.0
 
@@ -384,11 +410,11 @@ async def predict(files: List[UploadFile] = File(...)):
     append_monitor_row({
         "ts": datetime.utcnow().isoformat(timespec="seconds") + "Z",
         "num_images": num_images,
-        "selected_model": chosen_model_for_request or "",
+        "selected_model": chosen_model,
         "router_total_ms": float(req_ms),
     })
 
-    return {"count": len(results), "results": results}
+    return {"count": len(results), "selected_model": chosen_model, "request_total_ms": float(req_ms), "results": results}
 
 
 def main():

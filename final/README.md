@@ -11,3 +11,7 @@ if you are redeploying:
 kubectl rollout restart deployment/model1
 kubectl rollout restart deployment/model2
 kubectl rollout restart deployment/router
+
+
+Please use this to monitor the Cpu% uses and number of replicates:
+kubectl get hpa -w
