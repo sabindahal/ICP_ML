@@ -1,4 +1,5 @@
-import os, time, random, socket, threading, math
+import os, time, socket, threading, math, csv
+from datetime import datetime
 from typing import Dict, List, Optional, Deque, Tuple
 from collections import deque
 
@@ -23,13 +24,18 @@ ENDPOINT_RECHECK_SEC = float(os.getenv("ENDPOINT_RECHECK_SEC", "2.0"))
 
 # Policy knobs
 DEADLINE_MS = float(os.getenv("DEADLINE_MS", "3000"))
-WINDOW_SEC = float(os.getenv("WINDOW_SEC", "30"))
-MIN_SAMPLES = int(os.getenv("MIN_SAMPLES", "10"))
-SWITCH_COOLDOWN_SEC = float(os.getenv("SWITCH_COOLDOWN_SEC", "10"))
+WINDOW_SEC = float(os.getenv("WINDOW_SEC", "20"))
+MIN_SAMPLES = int(os.getenv("MIN_SAMPLES", "5"))
+SWITCH_COOLDOWN_SEC = float(os.getenv("SWITCH_COOLDOWN_SEC", "3"))
 LAT_PCTL = float(os.getenv("LAT_PCTL", "95"))
 
-ACCURATE_MODEL = os.getenv("ACCURATE_MODEL", "model1")
-FAST_MODEL = os.getenv("FAST_MODEL", "model2")
+ACCURATE_MODEL = os.getenv("ACCURATE_MODEL", "model2")
+FAST_MODEL = os.getenv("FAST_MODEL", "model1")
+
+# Monitoring log
+MONITOR_CSV_PATH = os.getenv("MONITOR_CSV_PATH", "router_monitor.csv")
+MONITOR_SORT_BY = os.getenv("MONITOR_SORT_BY", "router_total_ms")  # router_total_ms | ts
+MONITOR_LOCK = threading.Lock()
 
 app = FastAPI(title="OCR Monitoring Router")
 
@@ -62,10 +68,7 @@ class Worker:
 
 
 class RollingStats:
-    """
-    Stores recent request outcomes per model:
-    (timestamp, router_total_ms, ok)
-    """
+
     def __init__(self, window_sec: float):
         self.window_sec = window_sec
         self.data: Dict[str, Deque[Tuple[float, float, bool]]] = {
@@ -121,7 +124,7 @@ class PoolManager:
         self.stats = RollingStats(window_sec=WINDOW_SEC)
 
         # hysteresis
-        self.last_choice = FAST_MODEL
+        self.last_choice = ACCURATE_MODEL
         self.last_switch_at = 0.0
 
     def refresh(self):
@@ -165,17 +168,8 @@ class PoolManager:
             w.inflight = max(0, w.inflight - 1)
 
     def choose_model(self) -> Tuple[str, Dict[str, Dict[str, Optional[float]]]]:
-        """
-        Heuristic model switching:
-        Prefer ACCURATE_MODEL if:
-          - enough samples
-          - error rate acceptable
-          - p{LAT_PCTL} latency <= DEADLINE_MS
-        Else use FAST_MODEL.
-        Includes cooldown to avoid flip-flopping.
-        """
-        a = ACCURATE_MODEL
-        f = FAST_MODEL
+        a = ACCURATE_MODEL  
+        f = FAST_MODEL     
 
         sa = self.stats.summary(a)
         sf = self.stats.summary(f)
@@ -183,28 +177,40 @@ class PoolManager:
         now = time.time()
         can_switch = (now - self.last_switch_at) >= SWITCH_COOLDOWN_SEC
 
-        enough_a = (sa["n"] or 0.0) >= MIN_SAMPLES
-        enough_f = (sf["n"] or 0.0) >= MIN_SAMPLES
+        enough_a = (sa.get("n") or 0.0) >= MIN_SAMPLES
+        enough_f = (sf.get("n") or 0.0) >= MIN_SAMPLES
 
-        a_err = sa["err_rate"] if sa["err_rate"] is not None else 1.0
-        f_err = sf["err_rate"] if sf["err_rate"] is not None else 1.0
+        a_err = sa["err_rate"] if sa.get("err_rate") is not None else 1.0
+        f_err = sf["err_rate"] if sf.get("err_rate") is not None else 1.0
 
-        a_p = sa["pctl_ms"]
-        f_p = sf["pctl_ms"]
+        a_p = sa.get("pctl_ms")
+        f_p = sf.get("pctl_ms")
 
         a_healthy = a_err <= 0.10
-        f_healthy = f_err <= 0.20
+        f_healthy = f_err <= 0.10
 
-        accurate_meets_deadline = bool(enough_a and a_healthy and (a_p is not None) and (a_p <= DEADLINE_MS))
+        accurate_meets_deadline = bool(
+            enough_a and a_healthy and (a_p is not None) and (a_p <= DEADLINE_MS)
+        )
 
-        desired = a if accurate_meets_deadline else f
-
-        # If fast has no samples yet but accurate does and is healthy, allow accurate
-        if (not enough_f) and enough_a and a_healthy:
+        # Bootstrap: make sure BOTH models get MIN_SAMPLES so switching becomes possible.
+        # This avoids the deadlock where fast never gets any samples.
+        if not enough_a:
             desired = a
+        elif not enough_f:
+            desired = f
+        else:
+            # Normal operation: prefer accurate if it can meet deadline, else fast
+            desired = a if accurate_meets_deadline else f
 
-        # cooldown hysteresis
-        if not can_switch and desired != self.last_choice:
+            # Optional: if the chosen model is unhealthy, fall back to the other if healthy
+            if desired == a and (not a_healthy) and f_healthy:
+                desired = f
+            elif desired == f and (not f_healthy) and a_healthy:
+                desired = a
+
+        # Cooldown hysteresis (prevents flapping)
+        if (not can_switch) and desired != self.last_choice:
             desired = self.last_choice
 
         if desired != self.last_choice:
@@ -213,32 +219,115 @@ class PoolManager:
 
         return desired, {"accurate": sa, "fast": sf}
 
-
 pm = PoolManager()
+
+
+def append_monitor_row(row: Dict[str, object]) -> None:
+
+    fieldnames = ["ts", "num_images", "selected_model", "router_total_ms"]
+
+    with MONITOR_LOCK:
+        file_exists = os.path.exists(MONITOR_CSV_PATH)
+        with open(MONITOR_CSV_PATH, "a", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=fieldnames)
+            if not file_exists:
+                w.writeheader()
+
+            safe_row = {k: row.get(k) for k in fieldnames}
+            w.writerow(safe_row)
+
+
+def read_monitor_rows() -> List[Dict[str, object]]:
+    if not os.path.exists(MONITOR_CSV_PATH):
+        return []
+
+    with MONITOR_LOCK:
+        with open(MONITOR_CSV_PATH, "r", newline="", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+
+    def to_int(x, default=0):
+        try:
+            return int(float(x))
+        except Exception:
+            return default
+
+    def to_float(x, default=0.0):
+        try:
+            return float(x)
+        except Exception:
+            return default
+
+    out: List[Dict[str, object]] = []
+    for r in rows:
+        rr: Dict[str, object] = dict(r)
+        rr["num_images"] = to_int(r.get("num_images"))
+        rr["router_total_ms"] = to_float(r.get("router_total_ms"))
+        out.append(rr)
+
+    return out
 
 
 @app.get("/")
 def index():
-    # Keep single-file UI outside python if you want
     return FileResponse("web/index.html")
+
+
+@app.get("/monitor/ui")
+def monitor_ui():
+    return FileResponse("web/monitor.html")
+
+
+@app.get("/monitor")
+def monitor(limit: int = 300, sort_by: str = ""):
+    """
+    Returns rows from the monitoring CSV in descending order.
+    Default sort: router_total_ms descending.
+    """
+    rows = read_monitor_rows()
+
+    if not rows:
+        return {"count": 0, "rows": [], "csv_path": MONITOR_CSV_PATH}
+
+    key = (sort_by or MONITOR_SORT_BY).strip()
+    allowed = {"ts", "router_total_ms", "num_images", "selected_model"}
+    if key not in allowed:
+        key = "router_total_ms"
+
+    rows.sort(
+        key=lambda x: x.get(key, 0) if x.get(key, 0) is not None else 0,
+        reverse=True,
+    )
+
+    if limit > 0:
+        rows = rows[:limit]
+
+    return {"count": len(rows), "sort_by": key, "csv_path": MONITOR_CSV_PATH, "rows": rows}
 
 
 @app.post("/predict")
 async def predict(files: List[UploadFile] = File(...)):
     pm.refresh()
 
+    req_t0 = time.perf_counter()
+    num_images = len(files)
+
+    # We log ONE row per request (batch upload). Use the first image's chosen model as the request's model.
+    chosen_model_for_request = None
+
     results = []
     for f in files:
         img = await f.read()
 
         chosen_model, policy_stats = pm.choose_model()
+        if chosen_model_for_request is None:
+            chosen_model_for_request = chosen_model
 
         pm.refresh()
         worker = pm.pick_worker(chosen_model)
         if worker is None:
             return JSONResponse(
                 status_code=503,
-                content={"error": f"No backends available for {chosen_model}. Check services/endpoints."}
+                content={"error": f"No backends available for {chosen_model}. Check services/endpoints."},
             )
 
         pm.incr(worker)
@@ -276,7 +365,7 @@ async def predict(files: List[UploadFile] = File(...)):
                 "pctl": LAT_PCTL,
                 "accurate_model": ACCURATE_MODEL,
                 "fast_model": FAST_MODEL,
-                "stats": policy_stats,  # already JSON-safe (no inf/NaN)
+                "stats": policy_stats,
             },
             "backend_target": worker.target,
             "backend_pod": resp.pod_name,
@@ -288,6 +377,16 @@ async def predict(files: List[UploadFile] = File(...)):
             "model_infer_ms": float(resp.infer_ms),
             "router_total_ms": float(router_ms),
         })
+
+    req_ms = (time.perf_counter() - req_t0) * 1000.0
+
+    # Log one row per request (batch upload)
+    append_monitor_row({
+        "ts": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "num_images": num_images,
+        "selected_model": chosen_model_for_request or "",
+        "router_total_ms": float(req_ms),
+    })
 
     return {"count": len(results), "results": results}
 

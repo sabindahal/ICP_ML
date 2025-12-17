@@ -20,7 +20,7 @@ spec:
           imagePullPolicy: IfNotPresent
           env:
             - name: MODEL_NAME
-              value: "model2"
+              value: "easyOcr"
             - name: DEMO_TEXT
               value: "演示输出：你好，世界"
             - name: GRPC_PORT

@@ -32,9 +32,20 @@ spec:
             - name: DEADLINE_MS
               value: "3000"
             - name: ACCURATE_MODEL
-              value: "model1"
-            - name: FAST_MODEL
               value: "model2"
+            - name: FAST_MODEL
+              value: "model1"
+
+            # Routing policy knobs
+            - name: WINDOW_SEC
+              value: "20"
+            - name: MIN_SAMPLES
+              value: "1"
+            - name: SWITCH_COOLDOWN_SEC
+              value: "1"
+            - name: LAT_PCTL
+              value: "95"
+
           ports:
             - containerPort: 8080
               name: http

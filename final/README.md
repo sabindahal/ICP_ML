@@ -5,3 +5,9 @@ cd router && docker build -t ocr-router:demo . && cd ..
 kubectl apply -f k8s/
 
 open http://localhost:30080
+
+
+if you are redeploying:
+kubectl rollout restart deployment/model1
+kubectl rollout restart deployment/model2
+kubectl rollout restart deployment/router

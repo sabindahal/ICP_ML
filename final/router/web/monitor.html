@@ -1,0 +1,111 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Router Monitor</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 18px; }
+    h2 { margin: 0 0 10px 0; }
+    .bar { display: flex; gap: 10px; align-items: center; margin: 10px 0 14px 0; flex-wrap: wrap; }
+    select, input, button { padding: 6px 10px; }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; }
+    th, td { border: 1px solid #ddd; padding: 8px; }
+    th { cursor: pointer; background: #f4f4f4; position: sticky; top: 0; }
+    tr:nth-child(even) { background: #fafafa; }
+    .muted { color: #666; font-size: 12px; margin-top: 6px; }
+    .pill { padding: 2px 8px; border-radius: 999px; background: #eee; display: inline-block; }
+  </style>
+</head>
+<body>
+  <h2>OCR Router Monitor</h2>
+
+  <div class="bar">
+    <label>Sort by</label>
+    <select id="sortBy">
+      <option value="router_total_ms">router_total_ms</option>
+      <option value="ts">ts</option>
+      <option value="num_images">num_images</option>
+      <option value="selected_model">selected_model</option>
+    </select>
+
+    <label>Limit</label>
+    <input id="limit" type="number" value="200" min="1" max="5000" />
+
+    <button id="refresh">Refresh</button>
+  </div>
+
+  <div class="muted" id="meta"></div>
+
+  <div style="overflow:auto; max-height: 75vh;">
+    <table id="tbl">
+      <thead></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+<script>
+  // minimal CSV schema
+  const columns = ["ts", "num_images", "selected_model", "router_total_ms"];
+
+  function fmt(col, v) {
+    if (v === null || v === undefined) return "";
+    if (col === "router_total_ms") {
+      const n = Number(v);
+      return Number.isFinite(n) ? n.toFixed(2) : "";
+    }
+    if (col === "num_images") {
+      const n = Number(v);
+      return Number.isFinite(n) ? String(Math.trunc(n)) : "";
+    }
+    return String(v);
+  }
+
+  function renderTable(rows) {
+    const thead = document.querySelector("#tbl thead");
+    const tbody = document.querySelector("#tbl tbody");
+    thead.innerHTML = "";
+    tbody.innerHTML = "";
+
+    const trh = document.createElement("tr");
+    columns.forEach(c => {
+      const th = document.createElement("th");
+      th.textContent = c;
+      trh.appendChild(th);
+    });
+    thead.appendChild(trh);
+
+    rows.forEach(r => {
+      const tr = document.createElement("tr");
+      columns.forEach(c => {
+        const td = document.createElement("td");
+        const v = r[c];
+
+        if (c === "selected_model" && v) {
+          td.innerHTML = "<span class='pill'>" + String(v) + "</span>";
+        } else {
+          td.textContent = fmt(c, v);
+        }
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+  }
+
+  async function load() {
+    const sortBy = document.getElementById("sortBy").value;
+    const limit = document.getElementById("limit").value || 200;
+
+    const res = await fetch(`/monitor?sort_by=${encodeURIComponent(sortBy)}&limit=${encodeURIComponent(limit)}`);
+    const data = await res.json();
+
+    document.getElementById("meta").textContent =
+      `Rows: ${data.count} | Sort: ${data.sort_by} | CSV: ${data.csv_path}`;
+
+    renderTable(data.rows || []);
+  }
+
+  document.getElementById("refresh").addEventListener("click", load);
+  load();
+</script>
+</body>
+</html>
